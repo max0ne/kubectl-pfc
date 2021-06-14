@@ -21,10 +21,12 @@ import (
 	"os"
 	"regexp"
 
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"k8s.io/utils/exec"
 
 	"github.com/max0ne/kubectl-pfc/pkg/curlflags"
+	"github.com/max0ne/kubectl-pfc/pkg/url"
 )
 
 func parseArgs(args []string) (portForwardArgs []string, curlCommand string, curlArgs []string, err error) {
@@ -75,9 +77,18 @@ func runCurl(command string, args []string, localHost, localPort string) error {
 		return fmt.Errorf("unable to find url flag in curl args %v", args)
 	}
 
-	originalHost := args[urlFlagIndex]
-	targetHost := fmt.Sprintf("%s:%s", originalHost, localPort)
-	resolveArg := fmt.Sprintf("%s:%s:%s", originalHost, localPort, localHost)
+	originalURL := args[urlFlagIndex]
+	scheme, host, port, query, err := url.Parse(originalURL)
+	if err != nil {
+		return errors.Wrapf(err, "unable to parse url %s", originalURL)
+	}
+	log.Debugf("Original URL %s parsed to %+v", originalURL, []string{scheme, host, port, query})
+	if len(port) > 0 {
+		return fmt.Errorf("curl url does not allow specifying port, url: %s, port: %s", originalURL, port)
+	}
+
+	targetHost := fmt.Sprintf("%s%s:%s%s", scheme, host, localPort, query)
+	resolveArg := fmt.Sprintf("%s:%s:%s", host, localPort, localHost)
 
 	curlArgs := args[:]
 	curlArgs[urlFlagIndex] = targetHost
