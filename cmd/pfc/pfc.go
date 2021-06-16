@@ -57,13 +57,12 @@ func runPortForward(args []string) (string, string, error) {
 	go cmd.Run()
 
 	reader := bufio.NewReader(stdout)
+	regex := regexp.MustCompile("^Forwarding from (.+?):(\\d+) ->")
 	for {
 		lineBytes, err := reader.ReadBytes('\n')
 		if err != nil {
 			return "", "", err
 		}
-
-		regex := regexp.MustCompile("^Forwarding from (.+?):(\\d+) ->")
 		matches := regex.FindSubmatch(lineBytes)
 		if len(matches) > 2 {
 			return string(matches[1]), string(matches[2]), nil
