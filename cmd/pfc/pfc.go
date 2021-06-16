@@ -19,6 +19,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/signal"
 	"regexp"
 
 	"github.com/pkg/errors"
@@ -45,27 +46,29 @@ func parseArgs(args []string) (portForwardArgs []string, curlCommand string, cur
 }
 
 // runPortForward runs port-forward with given args, returns the local host and port it's using
-func runPortForward(args []string) (string, string, error) {
+func runPortForward(args []string) (exec.Cmd, string, string, error) {
 	cmd := exec.New().Command("kubectl", append([]string{"port-forward"}, args...)...)
 	log.Debugf("Executing port-forward with args %v", args)
 
 	cmd.SetStderr(os.Stderr)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", "", err
+		return nil, "", "", err
 	}
-	go cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return nil, "", "", err
+	}
 
 	reader := bufio.NewReader(stdout)
 	regex := regexp.MustCompile("^Forwarding from (.+?):(\\d+) ->")
 	for {
 		lineBytes, err := reader.ReadBytes('\n')
 		if err != nil {
-			return "", "", err
+			return nil, "", "", err
 		}
 		matches := regex.FindSubmatch(lineBytes)
 		if len(matches) > 2 {
-			return string(matches[1]), string(matches[2]), nil
+			return cmd, string(matches[1]), string(matches[2]), nil
 		}
 	}
 }
@@ -107,11 +110,21 @@ func Run() error {
 		return err
 	}
 
-	localHost, localPort, err := runPortForward(portForwardArgs)
+	portForwardCmd, localHost, localPort, err := runPortForward(portForwardArgs)
 	if err != nil {
 		return err
 	}
 
-	err = runCurl(curlCommand, curlArgs, localHost, localPort)
-	return err
+	// Cleanup port-forward when main process finishes
+	defer portForwardCmd.Stop()
+
+	// Cleanup port-forward when the main process is terminated
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt)
+	go func() {
+		<-ch
+		portForwardCmd.Stop()
+	}()
+
+	return runCurl(curlCommand, curlArgs, localHost, localPort)
 }
